@@ -80,6 +80,7 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+#define CODED_PHY_ADV
 
 #define ADVERTISING_LED BSP_BOARD_LED_0 /**< Is on when device is advertising. */
 #define CONNECTED_LED BSP_BOARD_LED_1   /**< Is on when device has connected. */
@@ -91,10 +92,9 @@
 
 #define BUTTON_DETECTION_DELAY APP_TIMER_TICKS(50) /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 
-
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "52811_UART"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "LRange811"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -111,6 +111,19 @@
 #define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(30000)                      /**< Time between each call to sd_ble_gap_conn_param_update after the first call (30 seconds). */
 #define MAX_CONN_PARAMS_UPDATE_COUNT    3                                           /**< Number of attempts before giving up the connection parameter negotiation. */
 
+#define SCHED_MAX_EVENT_DATA_SIZE APP_TIMER_SCHED_EVENT_DATA_SIZE /**< Maximum size of scheduler events. */
+#ifdef SVCALL_AS_NORMAL_FUNCTION
+#define SCHED_QUEUE_SIZE 40 /**< Maximum number of events in the scheduler queue. More is needed in case of Serialization. */
+#else
+#define SCHED_QUEUE_SIZE 20 /**< Maximum number of events in the scheduler queue. */
+#endif
+
+#ifdef NRF52840_XXAA
+#define TX_POWER_LEVEL (8) /**< TX Power Level value. This will be set both in the TX Power service, in the advertising data, and also used to set the radio transmit power. */
+#else
+#define TX_POWER_LEVEL (4) /**< TX Power Level value. This will be set both in the TX Power service, in the advertising data, and also used to set the radio transmit power. */
+#endif
+
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
 #define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
@@ -119,7 +132,7 @@
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                             /**< Context for the Queued Write module.*/
-BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
+//BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
 
 static uint16_t m_conn_handle          = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
 static uint16_t m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;              /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
@@ -128,6 +141,76 @@ static ble_uuid_t m_adv_uuids[]          =                                      
         {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
 
+#define COMPANY_IDENTIFIER              0x0059                                        /**< Company identifier for Nordic Semiconductor ASA as per www.bluetooth.org. */
+
+#define ADV_ENCODED_AD_TYPE_LEN         1                                             /**< Length of encoded ad type in advertisement data. */
+#define ADV_ENCODED_AD_TYPE_LEN_LEN     1                                             /**< Length of the 'length field' of each ad type in advertisement data. */
+#define ADV_FLAGS_LEN                   1                                             /**< Length of flags field that will be placed in advertisement data. */
+#define ADV_ENCODED_FLAGS_LEN           (ADV_ENCODED_AD_TYPE_LEN +       \
+                                         ADV_ENCODED_AD_TYPE_LEN_LEN +   \
+                                         ADV_FLAGS_LEN)                              /**< Length of flags field in advertisement packet. (1 byte for encoded ad type plus 1 byte for length of flags plus the length of the flags itself). */
+
+#define ADV_ENCODED_COMPANY_ID_LEN      2                                            /**< Length of the encoded Company Identifier in the Manufacturer Specific Data part of the advertisement data. */
+
+#define APP_ADVDATA_DEVICE_NAME         "DEVICE_00001"
+
+#define APP_ADVDATA_DEVICE_NAME         0x44, 0x045, 0x56, 0x49, 0x43, 0x45, 0x5F, 0x030, 0x030, 0x030, 0x030, 0x031
+
+#define APP_ADVDATA_MAC_ADDR    { 0xC0, 0x11, 0x22, 0x33, 0x44, 0xCC }
+
+#define APP_ADVDATA_BATTERY_VALUE 0x64
+#define APP_ADVDATA_TX_POWER      0x00
+#define APP_ADVDATA_MANUFACTURER_OTHER_DATA 0x01, 0x02, 0x03, 0x04
+
+#define APP_ADVDATA_DEVICE_NAME_LENGTH 0x0C
+#define APP_ADVDATA_MAC_ADDR_LENGTH 0x06
+#define APP_ADVDATA_BATTERY_LENGTH 0x01
+#define APP_ADVDATA_TX_POWER_LENGTH 0x01
+#define APP_ADVDATA_OTHER_LENGTH 0x06
+
+#define ADV_ADDL_MANUF_DATA_LEN         (BLE_GAP_ADV_SET_DATA_SIZE_MAX -                \
+                                         (                                     \
+                                                 ADV_ENCODED_FLAGS_LEN +           \
+                                                 (                                 \
+                                                         ADV_ENCODED_AD_TYPE_LEN +     \
+                                                         ADV_ENCODED_AD_TYPE_LEN_LEN + \
+                                                         ADV_ENCODED_COMPANY_ID_LEN    \
+                                                 )                                 \
+                                         )                                     \
+                                         )
+
+/**< Value of the additional manufacturer specific data that will be placed in air (initialized to all zeros). */
+static uint8_t m_addl_adv_manuf_data[ADV_ADDL_MANUF_DATA_LEN]  =
+{
+        APP_ADVDATA_DEVICE_NAME,                                 /* 6 bytes for Device ID */
+        APP_ADVDATA_MAC_ADDR,                                  /* 6 bytes for BLE MAC Address */
+        APP_ADVDATA_BATTERY_VALUE,                             /* 1 byte for battery value in % */
+        APP_ADVDATA_TX_POWER,                                /* 1 byte for the measure RSSI value */
+        APP_ADVDATA_MANUFACTURER_OTHER_DATA,                                /* 8 bytes for other data*/
+};
+
+static bool m_advertising_is_running = false;
+
+
+static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;           /**< Advertising handle used to identify an advertising set. */
+static uint8_t m_enc_advdata[BLE_GAP_ADV_SET_DATA_SIZE_MAX];            /**< Buffer for storing an encoded advertising set. */
+static uint8_t m_enc_srp_data[BLE_GAP_ADV_SET_DATA_SIZE_MAX];           /**< Buffer for storing an encoded scan data. */
+
+/**@brief Struct that contains pointers to the encoded advertising data. */
+static ble_gap_adv_data_t m_adv_data =
+{
+        .adv_data =
+        {
+                .p_data = m_enc_advdata,
+                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+        },
+        .scan_rsp_data =
+        {
+                .p_data = m_enc_srp_data,
+                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+
+        }
+};
 
 static void advertising_start(void);
 
@@ -377,6 +460,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
                 NRF_LOG_INFO("Connected");
 //                err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
 //                APP_ERROR_CHECK(err_code);
+
+                m_advertising_is_running = false;
                 m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
                 err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
                 APP_ERROR_CHECK(err_code);
@@ -706,27 +791,103 @@ static void uart_init(void)
  */
 static void advertising_init(void)
 {
-        uint32_t err_code;
-        ble_advertising_init_t init;
+//        uint32_t err_code;
+//        ble_advertising_init_t init;
+//
+//        memset(&init, 0, sizeof(init));
+//
+//        init.advdata.name_type          = BLE_ADVDATA_FULL_NAME;
+//        init.advdata.include_appearance = false;
+//        init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+//
+//        init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+//        init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
+//
+//        init.config.ble_adv_fast_enabled  = true;
+//        init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;
+//        init.config.ble_adv_fast_timeout  = APP_ADV_DURATION;
+//        init.evt_handler = on_adv_evt;
+//
+//        err_code = ble_advertising_init(&m_advertising, &init);
+//        APP_ERROR_CHECK(err_code);
+//
+//        ble_advertising_conn_cfg_tag_set(&m_advertising, APP_BLE_CONN_CFG_TAG);
 
-        memset(&init, 0, sizeof(init));
 
-        init.advdata.name_type          = BLE_ADVDATA_FULL_NAME;
-        init.advdata.include_appearance = false;
-        init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+        ret_code_t err_code;
+        ble_advdata_t advdata;
+        ble_advdata_t srdata;
+        ble_advdata_manuf_data_t manuf_data;
 
-        init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
-        init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
+        memset(&advdata, 0, sizeof(advdata));
 
-        init.config.ble_adv_fast_enabled  = true;
-        init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;
-        init.config.ble_adv_fast_timeout  = APP_ADV_DURATION;
-        init.evt_handler = on_adv_evt;
+        advdata.include_appearance = false;
+        advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
-        err_code = ble_advertising_init(&m_advertising, &init);
+#if 0
+        manuf_data.company_identifier = COMPANY_IDENTIFIER;
+        manuf_data.data.size          = ADV_ADDL_MANUF_DATA_LEN;
+        manuf_data.data.p_data        = m_addl_adv_manuf_data;
+        advdata.p_manuf_specific_data = &manuf_data;
+
+        // Build and set advertising data.
+        memset(&srdata, 0, sizeof(srdata));
+
+        srdata.name_type = BLE_ADVDATA_FULL_NAME;
+        srdata.include_appearance = false;
+        srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+        srdata.uuids_complete.p_uuids = m_adv_uuids;
+#else
+
+        // Build and set advertising data.
+        memset(&advdata, 0, sizeof(advdata));
+
+        advdata.name_type = BLE_ADVDATA_FULL_NAME;
+        advdata.include_appearance = false;
+        advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+
+        memset(&srdata, 0, sizeof(srdata));
+#endif
+        ble_gap_adv_params_t adv_params;
+
+        // Set advertising parameters.
+        memset(&adv_params, 0, sizeof(adv_params));
+
+        err_code = ble_advdata_encode(&advdata, m_adv_data.adv_data.p_data, &m_adv_data.adv_data.len);
         APP_ERROR_CHECK(err_code);
 
-        ble_advertising_conn_cfg_tag_set(&m_advertising, APP_BLE_CONN_CFG_TAG);
+        //memset(&srdata, 0, sizeof(srdata));
+
+        err_code = ble_advdata_encode(&srdata, m_adv_data.scan_rsp_data.p_data, &m_adv_data.scan_rsp_data.len);
+        APP_ERROR_CHECK(err_code);
+
+
+
+        NRF_LOG_HEXDUMP_INFO(m_adv_data.adv_data.p_data, m_adv_data.adv_data.len);
+
+#ifndef CODED_PHY_ADV
+        adv_params.primary_phy = BLE_GAP_PHY_1MBPS;
+        adv_params.duration = APP_ADV_DURATION;
+        adv_params.properties.type = BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED;
+        adv_params.p_peer_addr = NULL;
+        adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
+        adv_params.interval = APP_ADV_INTERVAL;
+
+#else
+        adv_params.primary_phy = BLE_GAP_PHY_CODED;
+        adv_params.secondary_phy = BLE_GAP_PHY_CODED;
+        adv_params.properties.type = BLE_GAP_ADV_TYPE_EXTENDED_CONNECTABLE_NONSCANNABLE_UNDIRECTED;
+
+        adv_params.duration = APP_ADV_DURATION;
+        adv_params.p_peer_addr = NULL;
+        adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
+        adv_params.interval = APP_ADV_INTERVAL;
+#endif
+        err_code = sd_ble_gap_adv_set_configure(&m_adv_handle, &m_adv_data, &adv_params);
+        APP_ERROR_CHECK(err_code);
+
+        err_code = sd_ble_gap_tx_power_set(BLE_GAP_TX_POWER_ROLE_ADV, m_adv_handle, TX_POWER_LEVEL);
+        APP_ERROR_CHECK(err_code);
 }
 
 
@@ -767,14 +928,28 @@ static void idle_state_handle(void)
 }
 
 
+///**@brief Function for starting advertising.
+// */
+//static void advertising_start(void)
+//{
+//        uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+//        APP_ERROR_CHECK(err_code);
+//}
+
+
 /**@brief Function for starting advertising.
  */
 static void advertising_start(void)
 {
-        uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-        APP_ERROR_CHECK(err_code);
+        if (m_advertising_is_running != true)
+        {
+                ret_code_t err_code;
+                err_code = sd_ble_gap_adv_start(m_adv_handle, APP_BLE_CONN_CFG_TAG);
+                APP_ERROR_CHECK(err_code);
+                m_advertising_is_running = true;
+        }
+ 
 }
-
 
 /**@brief Application main function.
  */
