@@ -16,4 +16,5 @@ It means that the remainder size for the application is around 192KB - 156KB - 2
 
 ** This example shows the RSSI with Packet Success Rate at the Central UART terminal after connection.
 
+All details can be found at [URL: https://jimmywongbluetooth.wordpress.com/2019/09/18/nrf52811-with-ble-long-range-example/](https://jimmywongbluetooth.wordpress.com/2019/09/18/nrf52811-with-ble-long-range-example/).
 
